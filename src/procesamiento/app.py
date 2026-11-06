@@ -61,7 +61,7 @@ def _a_epoch_ms(iso: str) -> int:
 
 def handler(event, context):
     s3, tabla = _clientes()
-    pasadas = int(os.environ.get("PASADAS_PROCESAMIENTO", "400"))
+    pasadas = int(os.environ.get("PASADAS_PROCESAMIENTO", "300"))
 
     for registro in event["Records"]:
         evento = json.loads(registro["body"])

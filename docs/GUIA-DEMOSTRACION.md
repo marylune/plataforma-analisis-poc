@@ -176,12 +176,12 @@ función) y la tabla de validación.
 
 📸 `F4-01-actions-qa.png`: la ejecución en verde con sus trabajos.
 📸 `F4-02-resumen-despliegue-qa.png`: el resumen del despliegue.
-📸 `F4-03-validacion-qa-1024.png`: **importante**, es la **línea base** del escenario de cambio
-(memoria de 1.024 MB, promedio y percentil 95 del procesamiento). Anoten los valores.
+📸 `F4-03-validacion-qa-256.png`: **importante**, es la **línea base** del escenario de cambio
+(memoria de 256 MB, promedio y percentil 95 del procesamiento). Anoten los valores.
 📸 `F4-04-recursos-qa.png`: en AWS, **CloudFormation → plataforma-qa → Resources**, con todos
 los recursos creados desde el código.
 📸 `F4-05-alias-qa.png`: en **Lambda → plataforma-qa-procesamiento → Aliases → live**, la versión
-a la que apunta el alias y su descripción ("v1.4.0 - 1024 MB").
+a la que apunta el alias y su descripción ("v1.4.0 - 256 MB").
 
 > Si el despliegue falla, abra el paso que salió en rojo y copie el error: casi siempre es
 > el nombre de usuario en la pila `plataforma-bootstrap` o las variables del paso 3.6.
@@ -235,7 +235,7 @@ luego la editen: es el material principal del video.
 ### 7.1. Solicitud (Mateo)
 
 En **Issues → New issue → Solicitud de cambio**, complete la plantilla:
-- **Qué:** aumentar la memoria de la función de procesamiento de 1.024 MB a 2.048 MB en QA y producción.
+- **Qué:** aumentar la memoria de la función de procesamiento de 256 MB a 512 MB en QA y producción.
 - **Por qué:** el tiempo de procesamiento de la línea base (captura F4-03) y la campaña comercial que puede duplicar las cargas.
 - **Componentes:** función de procesamiento.
 - **Criterios de éxito:** percentil 95 del procesamiento menor que el de la línea base y menor a 60 s, sin mensajes en la cola de errores.
@@ -260,12 +260,12 @@ git checkout -b cambio/63-memoria-procesamiento
 ```
 
 Edite `infra/samconfig.toml`: en las secciones `[qa.deploy.parameters]` y `[prod.deploy.parameters]`
-cambie `MemoriaProcesamiento=1024` por `MemoriaProcesamiento=2048`. Edite también `VERSION`:
+cambie `MemoriaProcesamiento=256` por `MemoriaProcesamiento=512`. Edite también `VERSION`:
 cambie `1.4.0` por `1.4.1`, porque es un ajuste de configuración y corresponde a PARCHE (sección 7.2).
 
 ```bash
 git add infra/samconfig.toml VERSION
-git commit -m "perf(procesamiento): aumentar la memoria de la función de procesamiento a 2.048 MB (#63)"
+git commit -m "perf(procesamiento): aumentar la memoria de la función de procesamiento a 512 MB (#63)"
 git push -u origin cambio/63-memoria-procesamiento
 ```
 
@@ -306,10 +306,10 @@ dejando el mensaje del commit con el `(#63)`.
 
 La integración ejecuta **Desplegar** en QA y la **Validación en QA** con la nueva memoria.
 
-📸 `F7-09-validacion-qa-2048.png`: el resumen de validación con **2048 MB**. Compárenlo con
+📸 `F7-09-validacion-qa-512.png`: el resumen de validación con **512 MB**. Compárenlo con
 F4-03: el percentil 95 debe bajar.
 📸 `F7-10-alias-qa-nuevo.png`: en Lambda, el alias `live` de QA apunta a una versión nueva con
-descripción "v1.4.1 - 2048 MB".
+descripción "v1.4.1 - 512 MB".
 📸 `F7-11-cloudwatch-duracion.png`: en **CloudWatch → Metrics → Lambda → By Function Name →
 plataforma-qa-procesamiento → Duration**, la gráfica de las dos pruebas. Se ve la caída del tiempo.
 
@@ -355,12 +355,12 @@ Corresponde a la sección 9.7: se decide **revertir** el cambio, por ejemplo por
 ya existe; el pipeline no permite repetir versiones.
 
 8.3. Siga el mismo camino: controles automáticos (el conjunto de cambios muestra la memoria
-volviendo a 1.024 MB), aprobación de Camilo, integración en `main`, validación en QA, promoción
+volviendo a 256 MB), aprobación de Camilo, integración en `main`, validación en QA, promoción
 a `produccion` y versión `v1.4.2`.
 
 📸 `F8-01-pr-reversion.png`: la solicitud de reversión.
-📸 `F8-02-conjunto-cambios-reversion.png`: el conjunto de cambios con la memoria de vuelta a 1.024 MB.
-📸 `F8-03-alias-revertido.png`: el alias de producción apuntando a una versión con "1024 MB".
+📸 `F8-02-conjunto-cambios-reversion.png`: el conjunto de cambios con la memoria de vuelta a 256 MB.
+📸 `F8-03-alias-revertido.png`: el alias de producción apuntando a una versión con "256 MB".
 📸 `F8-04-releases.png`: la lista de versiones `v1.4.0`, `v1.4.1` y `v1.4.2`. Es la historia completa.
 
 **Opcional (más vistoso): reversión automática.** Durante el despliegue gradual en producción
@@ -395,12 +395,12 @@ con exactamente la misma versión que QA.
 ### 9.3. Detección de drift (secciones 2.4 y 8.3)
 
 1. En la consola de AWS, abra **Lambda → plataforma-dev-procesamiento → Configuration → General
-   configuration → Edit** y cambie la memoria a mano (por ejemplo, a 1536 MB). Este es el cambio
+   configuration → Edit** y cambie la memoria a mano (por ejemplo, a 384 MB). Este es el cambio
    no controlado que el plan quiere evitar.
 2. En GitHub, ejecute **Actions → Detección de drift → Run workflow**.
 3. El flujo encuentra la diferencia y abre automáticamente una solicitud "Drift detectado…" que
-   muestra el valor esperado (1024) y el real (1536).
-4. Corrija: devuelva la memoria a 1024 MB en la consola, ejecute de nuevo la detección y compruebe
+   muestra el valor esperado (256) y el real (384).
+4. Corrija: devuelva la memoria a 256 MB en la consola, ejecute de nuevo la detección y compruebe
    que `plataforma-dev` aparece como `IN_SYNC`. Cierre la solicitud con un comentario.
 
 📸 `F9-03-cambio-manual.png`, 📸 `F9-04-drift-detectado.png` (la solicitud creada sola) y
@@ -453,7 +453,8 @@ plataforma-qa-cola-errores → Send and receive messages → Poll for messages**
 | `iam:CreateOpenIDConnectProvider … explicit deny in a service control policy` | La cuenta no permite OIDC. Use la opción B de la fase 3. |
 | `Credentials could not be loaded` con la opción B | Faltan los secretos `AWS_ACCESS_KEY_ID` o `AWS_SECRET_ACCESS_KEY`, o tienen espacios de más. |
 | CloudShell: *Your account verification is in progress* | La cuenta nueva aún se está verificando (hasta dos días). Espere y vuelva a intentar. |
-| La validación en QA falla por tiempo | Revise en CloudWatch los registros de la función. Si el tiempo supera 60 s con 1.024 MB, baje `PasadasProcesamiento` (por ejemplo, a 250) en los tres ambientes de `samconfig.toml`, con un cambio por el proceso normal. |
+| `'MemorySize' value failed to satisfy constraint: Member must have value less than or equal to 512` | La cuenta nueva tiene una cuota de memoria de Lambda de 512 MB. La demostración ya usa 256 → 512 MB. Para valores mayores hay que pedir el aumento a AWS Support (caso *Account and billing*). |
+| La validación en QA falla por tiempo | Revise en CloudWatch los registros de la función. Si el tiempo supera 60 s con 256 MB, baje `PasadasProcesamiento` (por ejemplo, a 200) en los tres ambientes de `samconfig.toml`, con un cambio por el proceso normal. |
 | `Rate exceeded` o errores de concurrencia en Lambda | Las cuentas nuevas pueden tener una cuota de concurrencia baja. Pida un aumento en **Service Quotas → AWS Lambda → Concurrent executions**. |
 | "La versión vX ya existe" | Falta actualizar `VERSION` en el cambio. |
 | Error de CodeDeploy al desplegar (servicio no disponible en el plan gratuito) | Elimine en `infra/template.yaml` el bloque `DeploymentPreference` de la función (4 líneas) con un cambio por el proceso normal. La función sigue publicando versiones con el alias `live` y la reversión se hace como en la fase 8; solo se pierde el despliegue gradual y la reversión automática opcional. |

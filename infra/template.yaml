@@ -17,13 +17,13 @@ Parameters:
     Description: Ambiente que se despliega.
   MemoriaProcesamiento:
     Type: Number
-    Default: 1024
-    MinValue: 512
+    Default: 256
+    MinValue: 128
     MaxValue: 3008
     Description: Memoria de la función de procesamiento en MB (la CPU crece en proporción).
   PasadasProcesamiento:
     Type: Number
-    Default: 400
+    Default: 300
     MinValue: 1
     Description: Carga de cómputo simulada por archivo (pasadas de cálculo sobre el contenido).
   RetencionRegistrosDias:

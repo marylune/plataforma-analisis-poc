@@ -31,4 +31,6 @@ La guía completa está en [`docs/GUIA-DEMOSTRACION.md`](docs/GUIA-DEMOSTRACION.
 > usa el plan gratuito de AWS (el plan usa São Paulo) y el repositorio es público para poder
 > usar ramas protegidas sin costo (el plan usa un repositorio privado con GitHub Team). Si la
 > cuenta no permite OIDC, GitHub usa la clave de un usuario de IAM guardada como secreto
-> (`bootstrap/usuario-github.yaml`) en lugar del rol (`bootstrap/rol-github.yaml`).
+> (`bootstrap/usuario-github.yaml`) en lugar del rol (`bootstrap/rol-github.yaml`). La memoria
+> de la función es de 256 MB (y 512 MB tras el cambio) porque las cuentas nuevas tienen una cuota
+> de 512 MB en Lambda; el plan usa 1.024 y 2.048 MB. La proporción del cambio (el doble) es la misma.
