@@ -1,0 +1,66 @@
+# Detección de drift (secciones 2.4 y 8.3 del plan): compara cada ambiente desplegado con
+# su definición. Si encuentra diferencias, abre una solicitud de cambio (issue) para
+# documentarlas o corregirlas. Corre cada lunes y también puede ejecutarse a mano.
+name: Detección de drift
+
+on:
+  schedule:
+    - cron: "0 13 * * 1" # lunes 8:00 a. m. hora de Colombia
+  workflow_dispatch:
+
+permissions:
+  contents: read
+  id-token: write
+  issues: write
+
+env:
+  AWS_REGION: ${{ vars.AWS_REGION || 'us-east-2' }}
+
+jobs:
+  drift:
+    name: Detectar drift
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: aws-actions/configure-aws-credentials@v6
+        with:
+          # Con OIDC se usa AWS_ROLE_ARN; si la cuenta no permite OIDC, las claves del usuario de IAM.
+          role-to-assume: ${{ vars.AWS_ROLE_ARN }}
+          aws-access-key-id: ${{ secrets.AWS_ACCESS_KEY_ID }}
+          aws-secret-access-key: ${{ secrets.AWS_SECRET_ACCESS_KEY }}
+          aws-region: ${{ env.AWS_REGION }}
+
+      - name: Revisar las pilas
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          INFORME=informe-drift.md
+          echo "## Detección de drift ($(date -u '+%Y-%m-%d %H:%M') UTC)" > $INFORME
+          HAY_DRIFT=no
+          for S in plataforma-dev plataforma-qa plataforma-prod; do
+            if ! aws cloudformation describe-stacks --stack-name "$S" >/dev/null 2>&1; then
+              echo "- \`$S\`: no existe" >> $INFORME; continue
+            fi
+            ID=$(aws cloudformation detect-stack-drift --stack-name "$S" --query StackDriftDetectionId --output text)
+            while true; do
+              EST=$(aws cloudformation describe-stack-drift-detection-status --stack-drift-detection-id "$ID" --query DetectionStatus --output text)
+              [ "$EST" != "DETECTION_IN_PROGRESS" ] && break
+              sleep 5
+            done
+            RES=$(aws cloudformation describe-stack-drift-detection-status --stack-drift-detection-id "$ID" --query StackDriftStatus --output text)
+            echo "- \`$S\`: **$RES**" >> $INFORME
+            if [ "$RES" = "DRIFTED" ]; then
+              HAY_DRIFT=si
+              echo '```' >> $INFORME
+              aws cloudformation describe-stack-resource-drifts --stack-name "$S" \
+                --stack-resource-drift-status-filters MODIFIED DELETED \
+                --query 'StackResourceDrifts[].{Recurso:LogicalResourceId,Estado:StackResourceDriftStatus,Diferencias:PropertyDifferences}' \
+                --output yaml >> $INFORME
+              echo '```' >> $INFORME
+            fi
+          done
+          cat $INFORME >> "$GITHUB_STEP_SUMMARY"
+          if [ "$HAY_DRIFT" = "si" ]; then
+            gh issue create --repo "${{ github.repository }}" \
+              --title "Drift detectado en la infraestructura ($(date -u '+%Y-%m-%d'))" \
+              --body-file $INFORME
+          fi

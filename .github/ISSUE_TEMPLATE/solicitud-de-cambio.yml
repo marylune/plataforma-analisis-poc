@@ -1,0 +1,56 @@
+name: Solicitud de cambio
+description: Registro de un cambio sobre la infraestructura (sección 3.1 del plan).
+title: "[Cambio] "
+labels: ["solicitud de cambio"]
+body:
+  - type: input
+    id: solicitante
+    attributes:
+      label: Quién solicita el cambio
+    validations:
+      required: true
+  - type: textarea
+    id: que
+    attributes:
+      label: Qué se quiere modificar
+    validations:
+      required: true
+  - type: textarea
+    id: porque
+    attributes:
+      label: Por qué se necesita
+      description: Incluya las métricas o la necesidad del negocio que lo motivan.
+    validations:
+      required: true
+  - type: checkboxes
+    id: ambientes
+    attributes:
+      label: Ambientes afectados
+      options:
+        - label: Desarrollo
+        - label: QA
+        - label: Producción
+  - type: input
+    id: componentes
+    attributes:
+      label: Componentes afectados
+      placeholder: Por ejemplo, función de procesamiento (módulo de procesamiento)
+    validations:
+      required: true
+  - type: dropdown
+    id: prioridad
+    attributes:
+      label: Prioridad
+      options: [Alta, Media, Baja]
+    validations:
+      required: true
+  - type: textarea
+    id: criterios
+    attributes:
+      label: Criterios para considerarlo exitoso
+    validations:
+      required: true
+  - type: textarea
+    id: analisis
+    attributes:
+      label: Análisis de impacto, dependencias y riesgos (lo completa infraestructura)

@@ -1,0 +1,6 @@
+.aws-sam/
+__pycache__/
+informe-*.md
+informe-*.json
+*.pyc
+.venv/

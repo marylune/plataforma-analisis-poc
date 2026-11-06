@@ -1,0 +1,8 @@
+# Responsables de revisión
+#   @CamiloRestrepo5 -> responsable de infraestructura
+#   @MateoUsuga1  -> responsable del servicio y de la validación
+*                    @CamiloRestrepo5
+/infra/samconfig.toml @CamiloRestrepo5 @MateoUsuga1
+/VERSION             @CamiloRestrepo5 @MateoUsuga1
+/politicas/          @CamiloRestrepo5
+/.github/            @CamiloRestrepo5

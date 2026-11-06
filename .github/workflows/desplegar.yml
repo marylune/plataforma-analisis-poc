@@ -1,0 +1,174 @@
+# Despliegue por ambientes (secciones 2.5 y 7.2 del plan):
+#   - Ejecución manual (workflow_dispatch) desde una rama de cambio -> desarrollo (dev)
+#   - Integración en main                                          -> QA + validación
+#   - Integración en produccion                                    -> producción + versión publicada
+name: Desplegar
+
+on:
+  push:
+    branches: [main, produccion]
+  workflow_dispatch:
+
+permissions:
+  contents: write
+  id-token: write
+
+concurrency:
+  group: despliegue-${{ github.event_name == 'workflow_dispatch' && 'dev' || github.ref_name }}
+  cancel-in-progress: false
+
+env:
+  AWS_REGION: ${{ vars.AWS_REGION || 'us-east-2' }}
+  SAM_CLI_TELEMETRY: "0"
+  VERSION_SAM: "1.171.0"
+
+jobs:
+  desplegar:
+    name: Desplegar
+    runs-on: ubuntu-24.04
+    outputs:
+      ambiente: ${{ steps.amb.outputs.ambiente }}
+      version: ${{ steps.amb.outputs.version }}
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: Ambiente y versión
+        id: amb
+        run: |
+          if [ "${{ github.event_name }}" = "workflow_dispatch" ]; then AMB=dev
+          elif [ "${{ github.ref_name }}" = "main" ]; then AMB=qa
+          else AMB=prod; fi
+          echo "ambiente=$AMB" >> "$GITHUB_OUTPUT"
+          echo "version=$(cat VERSION)" >> "$GITHUB_OUTPUT"
+
+      - name: La versión de producción no puede repetirse
+        if: steps.amb.outputs.ambiente == 'prod'
+        run: |
+          V="v${{ steps.amb.outputs.version }}"
+          if git rev-parse -q --verify "refs/tags/$V" >/dev/null; then
+            echo "::error::La versión $V ya existe. Actualice el archivo VERSION en el cambio (sección 7.2)."
+            exit 1
+          fi
+
+      - uses: aws-actions/setup-sam@v3
+        with:
+          use-installer: true
+          version: ${{ env.VERSION_SAM }}
+          token: ${{ secrets.GITHUB_TOKEN }}
+
+      - uses: aws-actions/configure-aws-credentials@v6
+        with:
+          # Con OIDC se usa AWS_ROLE_ARN; si la cuenta no permite OIDC, las claves del usuario de IAM.
+          role-to-assume: ${{ vars.AWS_ROLE_ARN }}
+          aws-access-key-id: ${{ secrets.AWS_ACCESS_KEY_ID }}
+          aws-secret-access-key: ${{ secrets.AWS_SECRET_ACCESS_KEY }}
+          aws-region: ${{ env.AWS_REGION }}
+
+      - name: Construir
+        working-directory: infra
+        run: sam build --use-container
+
+      - name: Desplegar con SAM
+        working-directory: infra
+        run: |
+          set -o pipefail
+          AMB="${{ steps.amb.outputs.ambiente }}"
+          VERSION="${{ steps.amb.outputs.version }}"
+          sam deploy --config-env "$AMB" \
+            --parameter-overrides "$(python3 ../scripts/parametros.py "$AMB" VersionApp="$VERSION")" \
+            --tags "Ambiente=$AMB Servicio=plataforma-analisis Proyecto=gdi-proyecto3" \
+            --no-fail-on-empty-changeset 2>&1 | tee despliegue.txt
+
+      - name: Registro del despliegue
+        run: |
+          AMB="${{ steps.amb.outputs.ambiente }}"
+          F="plataforma-$AMB-procesamiento"
+          VF=$(aws lambda get-alias --function-name "$F" --name live --query FunctionVersion --output text)
+          DESC=$(aws lambda get-function-configuration --function-name "$F" --qualifier "$VF" --query Description --output text)
+          {
+            echo "## Despliegue en \`$AMB\`"
+            echo "| Dato | Valor |"
+            echo "|---|---|"
+            echo "| Versión del repositorio | ${{ steps.amb.outputs.version }} |"
+            echo "| Commit | \`${{ github.sha }}\` |"
+            echo "| Rama | ${{ github.ref_name }} |"
+            echo "| Ejecutado por | @${{ github.actor }} |"
+            echo "| Fecha (UTC) | $(date -u '+%Y-%m-%d %H:%M:%S') |"
+            echo "| Versión activa de la función (alias live) | $VF ($DESC) |"
+            echo
+            echo '```'
+            grep -iE "no changes to deploy|Successfully created/updated stack" infra/despliegue.txt || true
+            echo '```'
+          } >> "$GITHUB_STEP_SUMMARY"
+
+  validacion-dev:
+    name: Prueba en desarrollo
+    needs: desplegar
+    if: needs.desplegar.outputs.ambiente == 'dev'
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+      - run: pip install boto3==1.43.125
+      - uses: aws-actions/configure-aws-credentials@v6
+        with:
+          # Con OIDC se usa AWS_ROLE_ARN; si la cuenta no permite OIDC, las claves del usuario de IAM.
+          role-to-assume: ${{ vars.AWS_ROLE_ARN }}
+          aws-access-key-id: ${{ secrets.AWS_ACCESS_KEY_ID }}
+          aws-secret-access-key: ${{ secrets.AWS_SECRET_ACCESS_KEY }}
+          aws-region: ${{ env.AWS_REGION }}
+      - name: Procesar archivos de prueba
+        run: python scripts/validar.py --stack plataforma-dev --archivos 3 --tamano-mb 10 --p95-max-seg 60 --salida informe-dev
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: informe-dev
+          path: informe-dev.*
+
+  validacion-qa:
+    name: Validación en QA
+    needs: desplegar
+    if: needs.desplegar.outputs.ambiente == 'qa'
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+      - run: pip install boto3==1.43.125
+      - uses: aws-actions/configure-aws-credentials@v6
+        with:
+          # Con OIDC se usa AWS_ROLE_ARN; si la cuenta no permite OIDC, las claves del usuario de IAM.
+          role-to-assume: ${{ vars.AWS_ROLE_ARN }}
+          aws-access-key-id: ${{ secrets.AWS_ACCESS_KEY_ID }}
+          aws-secret-access-key: ${{ secrets.AWS_SECRET_ACCESS_KEY }}
+          aws-region: ${{ env.AWS_REGION }}
+      - name: Validar criterios de rendimiento (sección 5.2)
+        run: python scripts/validar.py --stack plataforma-qa --archivos 10 --tamano-mb 10 --p95-max-seg 60 --salida informe-qa
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: informe-qa
+          path: informe-qa.*
+          retention-days: 90
+
+  publicar-version:
+    name: Publicar versión
+    needs: desplegar
+    if: needs.desplegar.outputs.ambiente == 'prod'
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+      - name: Crear la etiqueta y la nota de versión
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          V="v${{ needs.desplegar.outputs.version }}"
+          gh release create "$V" --target "${{ github.sha }}" --title "$V" --generate-notes
+          echo "Versión publicada: **$V** (commit \`${{ github.sha }}\`)" >> "$GITHUB_STEP_SUMMARY"

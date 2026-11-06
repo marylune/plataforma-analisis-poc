@@ -1,0 +1,46 @@
+# Prueba de recuperación (sección 5.4): carga un archivo inválido y comprueba que, tras los
+# intentos fallidos, el mensaje llega a la cola de errores. Tarda entre 6 y 12 minutos.
+name: Prueba de la cola de errores
+
+on:
+  workflow_dispatch:
+    inputs:
+      ambiente:
+        description: Ambiente donde se hace la prueba
+        type: choice
+        options: [dev, qa]
+        default: qa
+
+permissions:
+  contents: read
+  id-token: write
+
+env:
+  AWS_REGION: ${{ vars.AWS_REGION || 'us-east-2' }}
+
+jobs:
+  prueba:
+    name: Prueba de la cola de errores
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+      - run: pip install boto3==1.43.125
+      - uses: aws-actions/configure-aws-credentials@v6
+        with:
+          # Con OIDC se usa AWS_ROLE_ARN; si la cuenta no permite OIDC, las claves del usuario de IAM.
+          role-to-assume: ${{ vars.AWS_ROLE_ARN }}
+          aws-access-key-id: ${{ secrets.AWS_ACCESS_KEY_ID }}
+          aws-secret-access-key: ${{ secrets.AWS_SECRET_ACCESS_KEY }}
+          aws-region: ${{ env.AWS_REGION }}
+      - name: Cargar un archivo válido y uno inválido
+        run: |
+          python scripts/validar.py --stack "plataforma-${{ inputs.ambiente }}" \
+            --archivos 1 --tamano-mb 1 --p95-max-seg 60 --probar-cola-errores --salida informe-cola-errores
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: informe-cola-errores
+          path: informe-cola-errores.*

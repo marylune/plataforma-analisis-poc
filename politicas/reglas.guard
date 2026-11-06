@@ -1,0 +1,48 @@
+# Reglas de política como código (sección 6.2 del plan). El pipeline las evalúa sobre
+# infra/template.yaml en cada solicitud de integración; si alguna falla, el cambio no avanza.
+
+let buckets = Resources.*[ Type == 'AWS::S3::Bucket' ]
+
+rule buckets_cifrados_privados_y_versionados when %buckets !empty {
+    %buckets.Properties.BucketEncryption exists
+        <<Los buckets deben tener cifrado>>
+    %buckets.Properties.VersioningConfiguration.Status == 'Enabled'
+        <<Los buckets deben tener control de versiones (recuperación de archivos)>>
+    %buckets.Properties.PublicAccessBlockConfiguration.BlockPublicAcls == true
+    %buckets.Properties.PublicAccessBlockConfiguration.BlockPublicPolicy == true
+    %buckets.Properties.PublicAccessBlockConfiguration.IgnorePublicAcls == true
+    %buckets.Properties.PublicAccessBlockConfiguration.RestrictPublicBuckets == true
+        <<Los buckets no pueden tener acceso público>>
+}
+
+let tablas = Resources.*[ Type == 'AWS::DynamoDB::Table' ]
+
+rule tablas_con_recuperacion when %tablas !empty {
+    %tablas.Properties.PointInTimeRecoverySpecification.PointInTimeRecoveryEnabled == true
+        <<Las tablas deben tener recuperación a un momento determinado (RPO)>>
+    %tablas.Properties.BillingMode == 'PAY_PER_REQUEST'
+        <<Las tablas deben estar en modo bajo demanda>>
+}
+
+let funciones = Resources.*[ Type == 'AWS::Serverless::Function' ]
+
+rule funciones_versionadas_y_trazadas when %funciones !empty {
+    %funciones.Properties.AutoPublishAlias exists
+        <<Las funciones deben publicar versiones con alias (rollback)>>
+    %funciones.Properties.Tracing == 'Active'
+        <<Las funciones deben tener trazas de X-Ray>>
+    %funciones.Properties.DeploymentPreference exists
+        <<Las funciones deben definir la forma de despliegue>>
+}
+
+let registros = Resources.*[ Type == 'AWS::Logs::LogGroup' ]
+
+rule registros_con_retencion when %registros !empty {
+    %registros.Properties.RetentionInDays exists
+        <<Los grupos de registros deben tener retención definida>>
+}
+
+rule cola_con_mensajes_fallidos {
+    Resources.ColaProcesamiento.Properties.RedrivePolicy exists
+        <<La cola de procesamiento debe enviar los mensajes fallidos a una cola de errores>>
+}

@@ -1,0 +1,117 @@
+# Controles automáticos de cada solicitud de integración (secciones 6.2 y 7.4 del plan).
+# Si alguno falla, la rama protegida no permite integrar el cambio.
+name: Validar cambio
+
+on:
+  pull_request:
+    branches: [main, produccion]
+
+permissions:
+  contents: read
+  id-token: write
+  checks: read
+
+env:
+  AWS_REGION: ${{ vars.AWS_REGION || 'us-east-2' }}
+  SAM_CLI_TELEMETRY: "0"
+  VERSION_SAM: "1.171.0"
+
+jobs:
+  plantilla:
+    name: Validar plantilla
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: aws-actions/setup-sam@v3
+        with:
+          use-installer: true
+          version: ${{ env.VERSION_SAM }}
+          token: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Validar sintaxis y propiedades (sam validate --lint)
+        run: sam validate --lint --template infra/template.yaml --region "$AWS_REGION"
+
+      - name: Instalar CloudFormation Guard
+        run: |
+          curl --proto '=https' --tlsv1.2 -sSf https://raw.githubusercontent.com/aws-cloudformation/cloudformation-guard/main/install-guard.sh | sh
+          echo "$HOME/.guard/bin" >> "$GITHUB_PATH"
+
+      - name: Evaluar reglas de política como código
+        run: |
+          cfn-guard validate --data infra/template.yaml --rules politicas/reglas.guard --show-summary all | tee guard.txt
+          { echo "## Reglas de CloudFormation Guard"; echo '```'; cat guard.txt; echo '```'; } >> "$GITHUB_STEP_SUMMARY"
+
+  verificar-qa:
+    name: Verificar validación en QA
+    if: github.base_ref == 'produccion'
+    runs-on: ubuntu-24.04
+    steps:
+      - name: Solo se promueve desde main
+        run: |
+          if [ "${{ github.head_ref }}" != "main" ]; then
+            echo "::error::A produccion solo se integran cambios desde main (sección 7.2)."
+            exit 1
+          fi
+      - name: El mismo commit superó la validación en QA
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          SHA="${{ github.event.pull_request.head.sha }}"
+          R=$(gh api "repos/${{ github.repository }}/commits/$SHA/check-runs" \
+                --jq '[.check_runs[] | select(.name=="Validación en QA")][0].conclusion')
+          echo "Validación en QA del commit $SHA: $R"
+          echo "Validación en QA del commit \`$SHA\`: **$R**" >> "$GITHUB_STEP_SUMMARY"
+          if [ "$R" != "success" ]; then
+            echo "::error::El commit $SHA no tiene una validación en QA exitosa."
+            exit 1
+          fi
+
+  conjunto-cambios:
+    name: Conjunto de cambios
+    needs: plantilla
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Ambiente de destino
+        id: amb
+        run: |
+          if [ "${{ github.base_ref }}" = "produccion" ]; then echo "ambiente=prod" >> "$GITHUB_OUTPUT"; else echo "ambiente=qa" >> "$GITHUB_OUTPUT"; fi
+
+      - uses: aws-actions/setup-sam@v3
+        with:
+          use-installer: true
+          version: ${{ env.VERSION_SAM }}
+          token: ${{ secrets.GITHUB_TOKEN }}
+
+      - uses: aws-actions/configure-aws-credentials@v6
+        with:
+          # Con OIDC se usa AWS_ROLE_ARN; si la cuenta no permite OIDC, las claves del usuario de IAM.
+          role-to-assume: ${{ vars.AWS_ROLE_ARN }}
+          aws-access-key-id: ${{ secrets.AWS_ACCESS_KEY_ID }}
+          aws-secret-access-key: ${{ secrets.AWS_SECRET_ACCESS_KEY }}
+          aws-region: ${{ env.AWS_REGION }}
+
+      - name: Construir
+        working-directory: infra
+        run: sam build --use-container
+
+      - name: Generar el conjunto de cambios (sin ejecutarlo)
+        working-directory: infra
+        run: |
+          set -o pipefail
+          AMB="${{ steps.amb.outputs.ambiente }}"
+          VERSION=$(cat ../VERSION)
+          sam deploy --config-env "$AMB" \
+            --parameter-overrides "$(python3 ../scripts/parametros.py "$AMB" VersionApp="$VERSION")" \
+            --tags "Ambiente=$AMB Servicio=plataforma-analisis Proyecto=gdi-proyecto3" \
+            --no-execute-changeset --no-fail-on-empty-changeset 2>&1 | tee conjunto.txt
+          {
+            echo "## Conjunto de cambios en \`$AMB\` (versión $VERSION)"
+            echo "Revise que lo que se va a crear, modificar o reemplazar corresponda con la solicitud de cambio."
+            echo '```'
+            sed -n '/CloudFormation stack changeset/,/^Changeset created/p' conjunto.txt
+            grep -i "no changes to deploy" conjunto.txt || true
+            echo '```'
+          } >> "$GITHUB_STEP_SUMMARY"

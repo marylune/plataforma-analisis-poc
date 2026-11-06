@@ -1,0 +1,45 @@
+AWSTemplateFormatVersion: "2010-09-09"
+Description: >-
+  Configuración inicial alternativa (se crea una sola vez desde la consola de CloudFormation)
+  para cuentas que no permiten crear proveedores OIDC, como las cuentas de la nueva
+  experiencia de registro de AWS en el plan gratuito. Crea un usuario de IAM solo para acceso
+  programático, con los mismos permisos que el rol de rol-github.yaml. La clave de acceso se
+  crea después en la consola de IAM y se guarda como secreto en GitHub.
+
+Resources:
+  UsuarioDespliegueGitHub:
+    Type: AWS::IAM::User
+    Properties:
+      UserName: plataforma-github-despliegue
+      ManagedPolicyArns:
+        - arn:aws:iam::aws:policy/PowerUserAccess
+      Policies:
+        - PolicyName: roles-de-la-plataforma
+          PolicyDocument:
+            Version: "2012-10-17"
+            Statement:
+              - Sid: GestionarSoloRolesDeLaPlataforma
+                Effect: Allow
+                Action:
+                  - iam:GetRole
+                  - iam:CreateRole
+                  - iam:DeleteRole
+                  - iam:PassRole
+                  - iam:TagRole
+                  - iam:UntagRole
+                  - iam:UpdateRole
+                  - iam:UpdateAssumeRolePolicy
+                  - iam:AttachRolePolicy
+                  - iam:DetachRolePolicy
+                  - iam:PutRolePolicy
+                  - iam:DeleteRolePolicy
+                  - iam:GetRolePolicy
+                  - iam:ListRolePolicies
+                  - iam:ListAttachedRolePolicies
+                  - iam:ListRoleTags
+                Resource: !Sub arn:aws:iam::${AWS::AccountId}:role/plataforma-*
+
+Outputs:
+  NombreUsuario:
+    Description: Cree la clave de acceso de este usuario en IAM y guárdela como secretos en GitHub.
+    Value: !Ref UsuarioDespliegueGitHub

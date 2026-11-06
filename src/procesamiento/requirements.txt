@@ -1,0 +1,4 @@
+# La función solo usa la biblioteca estándar de Python y boto3, que ya viene incluido
+# en el entorno de ejecución python3.12 de Lambda. Si se agregan librerías, deben
+# quedar aquí con versión exacta (por ejemplo, pandas==2.2.3) para que cada
+# construcción produzca el mismo paquete (sección 8.1 del plan).

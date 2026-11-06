@@ -1,0 +1,38 @@
+# Valores de cada ambiente (sección 6.2 del plan). La estructura de los recursos es la
+# misma en los tres; solo cambian estos parámetros. Se despliega con:
+#   sam deploy --config-env <dev|qa|prod>
+# El pipeline agrega VersionApp (archivo VERSION) y las etiquetas de la pila.
+version = 0.1
+
+[default.global.parameters]
+region = "us-east-2"
+
+[dev.deploy.parameters]
+stack_name = "plataforma-dev"
+region = "us-east-2"
+resolve_s3 = true
+s3_prefix = "plataforma-dev"
+capabilities = "CAPABILITY_IAM CAPABILITY_AUTO_EXPAND"
+confirm_changeset = false
+fail_on_empty_changeset = false
+parameter_overrides = "Ambiente=dev MemoriaProcesamiento=1024 PasadasProcesamiento=400 RetencionRegistrosDias=7 TipoDespliegue=AllAtOnce"
+
+[qa.deploy.parameters]
+stack_name = "plataforma-qa"
+region = "us-east-2"
+resolve_s3 = true
+s3_prefix = "plataforma-qa"
+capabilities = "CAPABILITY_IAM CAPABILITY_AUTO_EXPAND"
+confirm_changeset = false
+fail_on_empty_changeset = false
+parameter_overrides = "Ambiente=qa MemoriaProcesamiento=1024 PasadasProcesamiento=400 RetencionRegistrosDias=14 TipoDespliegue=AllAtOnce"
+
+[prod.deploy.parameters]
+stack_name = "plataforma-prod"
+region = "us-east-2"
+resolve_s3 = true
+s3_prefix = "plataforma-prod"
+capabilities = "CAPABILITY_IAM CAPABILITY_AUTO_EXPAND"
+confirm_changeset = false
+fail_on_empty_changeset = false
+parameter_overrides = "Ambiente=prod MemoriaProcesamiento=1024 PasadasProcesamiento=400 RetencionRegistrosDias=30 TipoDespliegue=Canary10Percent5Minutes"

@@ -1,0 +1,235 @@
+AWSTemplateFormatVersion: "2010-09-09"
+# AWS::LanguageExtensions va antes que SAM para que un cambio que solo modifica un
+# parámetro (por ejemplo, MemoriaProcesamiento en samconfig.toml) publique una nueva
+# versión de la función y mueva el alias. Sin esta transformación, SAM solo
+# actualizaría $LATEST y el alias seguiría apuntando a la versión anterior.
+Transform:
+  - AWS::LanguageExtensions
+  - AWS::Serverless-2016-10-31
+Description: >-
+  Demostración técnica del Proyecto 3 (Gestión de Infraestructura): componente de
+  procesamiento de archivos de la plataforma (S3 -> EventBridge -> SQS -> Lambda -> DynamoDB).
+
+Parameters:
+  Ambiente:
+    Type: String
+    AllowedValues: [dev, qa, prod]
+    Description: Ambiente que se despliega.
+  MemoriaProcesamiento:
+    Type: Number
+    Default: 1024
+    MinValue: 512
+    MaxValue: 3008
+    Description: Memoria de la función de procesamiento en MB (la CPU crece en proporción).
+  PasadasProcesamiento:
+    Type: Number
+    Default: 400
+    MinValue: 1
+    Description: Carga de cómputo simulada por archivo (pasadas de cálculo sobre el contenido).
+  RetencionRegistrosDias:
+    Type: Number
+    Default: 7
+    AllowedValues: [7, 14, 30]
+    Description: Días que se conservan los registros de la función.
+  TipoDespliegue:
+    Type: String
+    Default: AllAtOnce
+    AllowedValues: [AllAtOnce, Canary10Percent5Minutes]
+    Description: Forma en que el tráfico pasa a la nueva versión de la función.
+  VersionApp:
+    Type: String
+    Default: "0.0.0"
+    Description: Versión semántica del repositorio (archivo VERSION).
+
+Conditions:
+  EsProduccion: !Equals [!Ref Ambiente, prod]
+
+Resources:
+  # ---------------------------------------------------------------- Archivos
+  BucketArchivos:
+    Type: AWS::S3::Bucket
+    Properties:
+      BucketName: !Sub plataforma-${Ambiente}-archivos-${AWS::AccountId}
+      VersioningConfiguration:
+        Status: Enabled
+      BucketEncryption:
+        ServerSideEncryptionConfiguration:
+          - ServerSideEncryptionByDefault:
+              SSEAlgorithm: AES256
+      PublicAccessBlockConfiguration:
+        BlockPublicAcls: true
+        BlockPublicPolicy: true
+        IgnorePublicAcls: true
+        RestrictPublicBuckets: true
+      NotificationConfiguration:
+        EventBridgeConfiguration:
+          EventBridgeEnabled: true
+      LifecycleConfiguration:
+        Rules:
+          - Id: limpiar-versiones-antiguas
+            Status: Enabled
+            NoncurrentVersionExpiration:
+              NoncurrentDays: 30
+
+  # ---------------------------------------------------------------- Eventos y colas
+  ColaErrores:
+    Type: AWS::SQS::Queue
+    Properties:
+      QueueName: !Sub plataforma-${Ambiente}-cola-errores
+      MessageRetentionPeriod: 1209600 # 14 días para revisar y reprocesar
+
+  ColaProcesamiento:
+    Type: AWS::SQS::Queue
+    Properties:
+      QueueName: !Sub plataforma-${Ambiente}-cola-procesamiento
+      VisibilityTimeout: 360 # 6 veces el tiempo máximo de la función
+      RedrivePolicy:
+        deadLetterTargetArn: !GetAtt ColaErrores.Arn
+        maxReceiveCount: 2 # tras 2 intentos fallidos, el mensaje pasa a la cola de errores
+
+  ReglaArchivoCargado:
+    Type: AWS::Events::Rule
+    Properties:
+      Name: !Sub plataforma-${Ambiente}-archivo-cargado
+      Description: Envía a la cola de procesamiento cada archivo nuevo del bucket.
+      State: ENABLED
+      EventPattern:
+        source: [aws.s3]
+        detail-type: [Object Created]
+        detail:
+          bucket:
+            name: [!Ref BucketArchivos]
+      Targets:
+        - Id: cola-procesamiento
+          Arn: !GetAtt ColaProcesamiento.Arn
+
+  PoliticaColaProcesamiento:
+    Type: AWS::SQS::QueuePolicy
+    Properties:
+      Queues: [!Ref ColaProcesamiento]
+      PolicyDocument:
+        Version: "2012-10-17"
+        Statement:
+          - Sid: PermitirEventBridge
+            Effect: Allow
+            Principal:
+              Service: events.amazonaws.com
+            Action: sqs:SendMessage
+            Resource: !GetAtt ColaProcesamiento.Arn
+            Condition:
+              ArnEquals:
+                aws:SourceArn: !GetAtt ReglaArchivoCargado.Arn
+
+  # ---------------------------------------------------------------- Datos
+  TablaTrabajos:
+    Type: AWS::DynamoDB::Table
+    Properties:
+      TableName: !Sub plataforma-${Ambiente}-trabajos
+      BillingMode: PAY_PER_REQUEST
+      AttributeDefinitions:
+        - AttributeName: archivoId
+          AttributeType: S
+      KeySchema:
+        - AttributeName: archivoId
+          KeyType: HASH
+      PointInTimeRecoverySpecification:
+        PointInTimeRecoveryEnabled: true
+      DeletionProtectionEnabled: !If [EsProduccion, true, false]
+
+  # ---------------------------------------------------------------- Función
+  RegistrosProcesamiento:
+    Type: AWS::Logs::LogGroup
+    Properties:
+      LogGroupName: !Sub /aws/lambda/plataforma-${Ambiente}-procesamiento
+      RetentionInDays: !Ref RetencionRegistrosDias
+
+  FuncionProcesamiento:
+    Type: AWS::Serverless::Function
+    DependsOn: RegistrosProcesamiento
+    Properties:
+      FunctionName: !Sub plataforma-${Ambiente}-procesamiento
+      Description: Procesa los archivos cargados y registra el resultado del trabajo.
+      CodeUri: ../src/procesamiento/
+      Handler: app.handler
+      Runtime: python3.12
+      Architectures: [x86_64]
+      MemorySize: !Ref MemoriaProcesamiento
+      Timeout: 60 # criterio de la sección 5.2: procesamiento en menos de 1 minuto
+      Tracing: Active
+      AutoPublishAlias: live
+      AutoPublishAliasAllProperties: true
+      VersionDescription: !Sub "v${VersionApp} - ${MemoriaProcesamiento} MB"
+      Environment:
+        Variables:
+          TABLA_TRABAJOS: !Ref TablaTrabajos
+          PASADAS_PROCESAMIENTO: !Ref PasadasProcesamiento
+          AMBIENTE: !Ref Ambiente
+      Policies:
+        - DynamoDBCrudPolicy:
+            TableName: !Ref TablaTrabajos
+        - S3ReadPolicy:
+            BucketName: !Ref BucketArchivos
+      Events:
+        ColaProcesamiento:
+          Type: SQS
+          Properties:
+            Queue: !GetAtt ColaProcesamiento.Arn
+            BatchSize: 1
+      DeploymentPreference:
+        Type: !Ref TipoDespliegue
+        Alarms:
+          - !Ref AlarmaErroresProcesamiento
+
+  # ---------------------------------------------------------------- Monitoreo
+  AlarmaErroresProcesamiento:
+    Type: AWS::CloudWatch::Alarm
+    Properties:
+      AlarmName: !Sub plataforma-${Ambiente}-errores-procesamiento
+      AlarmDescription: Errores en la función de procesamiento. Durante un despliegue gradual, activa la reversión automática.
+      Namespace: AWS/Lambda
+      MetricName: Errors
+      Dimensions:
+        - Name: FunctionName
+          Value: !Sub plataforma-${Ambiente}-procesamiento
+      Statistic: Sum
+      Period: 60
+      EvaluationPeriods: 1
+      Threshold: 0
+      ComparisonOperator: GreaterThanThreshold
+      TreatMissingData: notBreaching
+
+  AlarmaColaErrores:
+    Type: AWS::CloudWatch::Alarm
+    Properties:
+      AlarmName: !Sub plataforma-${Ambiente}-mensajes-fallidos
+      AlarmDescription: Hay archivos que no se pudieron procesar y llegaron a la cola de errores.
+      Namespace: AWS/SQS
+      MetricName: ApproximateNumberOfMessagesVisible
+      Dimensions:
+        - Name: QueueName
+          Value: !GetAtt ColaErrores.QueueName
+      Statistic: Maximum
+      Period: 60
+      EvaluationPeriods: 1
+      Threshold: 0
+      ComparisonOperator: GreaterThanThreshold
+      TreatMissingData: notBreaching
+
+Outputs:
+  NombreBucket:
+    Description: Bucket donde se cargan los archivos.
+    Value: !Ref BucketArchivos
+  NombreTabla:
+    Description: Tabla de trabajos de procesamiento.
+    Value: !Ref TablaTrabajos
+  UrlColaProcesamiento:
+    Value: !Ref ColaProcesamiento
+  UrlColaErrores:
+    Value: !Ref ColaErrores
+  NombreFuncion:
+    Value: !Ref FuncionProcesamiento
+  AliasFuncion:
+    Description: Alias "live" que reciben los eventos; apunta a la versión activa.
+    Value: !Ref FuncionProcesamientoAliaslive
+  MemoriaConfigurada:
+    Value: !Ref MemoriaProcesamiento
