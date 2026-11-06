@@ -42,13 +42,13 @@ def procesar_contenido(datos: bytes, pasadas: int) -> dict:
     filas = 0
     total = 0.0
     lector = csv.reader(io.StringIO(datos.decode("utf-8", errors="replace")))
+    next(lector, None)  # encabezado
     for fila in lector:
         filas += 1
-        for celda in fila:
-            try:
-                total += float(celda)
-            except ValueError:
-                pass
+        try:
+            total += float(fila[4])  # columna "valor"
+        except (ValueError, IndexError):
+            pass
     huella = b""
     for _ in range(pasadas):
         huella = hashlib.sha256(huella + datos).digest()
@@ -61,7 +61,7 @@ def _a_epoch_ms(iso: str) -> int:
 
 def handler(event, context):
     s3, tabla = _clientes()
-    pasadas = int(os.environ.get("PASADAS_PROCESAMIENTO", "300"))
+    pasadas = int(os.environ.get("PASADAS_PROCESAMIENTO", "60"))
 
     for registro in event["Records"]:
         evento = json.loads(registro["body"])

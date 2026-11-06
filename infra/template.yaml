@@ -23,7 +23,7 @@ Parameters:
     Description: Memoria de la función de procesamiento en MB (la CPU crece en proporción).
   PasadasProcesamiento:
     Type: Number
-    Default: 300
+    Default: 60
     MinValue: 1
     Description: Carga de cómputo simulada por archivo (pasadas de cálculo sobre el contenido).
   RetencionRegistrosDias:
