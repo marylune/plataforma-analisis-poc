@@ -25,7 +25,7 @@ s3_prefix = "plataforma-qa"
 capabilities = "CAPABILITY_IAM CAPABILITY_AUTO_EXPAND"
 confirm_changeset = false
 fail_on_empty_changeset = false
-parameter_overrides = "Ambiente=qa MemoriaProcesamiento=256 PasadasProcesamiento=60 RetencionRegistrosDias=14 TipoDespliegue=AllAtOnce"
+parameter_overrides = "Ambiente=qa MemoriaProcesamiento=512 PasadasProcesamiento=60 RetencionRegistrosDias=14 TipoDespliegue=AllAtOnce"
 
 [prod.deploy.parameters]
 stack_name = "plataforma-prod"
@@ -35,4 +35,4 @@ s3_prefix = "plataforma-prod"
 capabilities = "CAPABILITY_IAM CAPABILITY_AUTO_EXPAND"
 confirm_changeset = false
 fail_on_empty_changeset = false
-parameter_overrides = "Ambiente=prod MemoriaProcesamiento=256 PasadasProcesamiento=60 RetencionRegistrosDias=30 TipoDespliegue=Canary10Percent5Minutes"
+parameter_overrides = "Ambiente=prod MemoriaProcesamiento=512 PasadasProcesamiento=60 RetencionRegistrosDias=30 TipoDespliegue=Canary10Percent5Minutes"
