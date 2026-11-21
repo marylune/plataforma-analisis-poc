@@ -46,3 +46,21 @@ rule cola_con_mensajes_fallidos {
     Resources.ColaProcesamiento.Properties.RedrivePolicy exists
         <<La cola de procesamiento debe enviar los mensajes fallidos a una cola de errores>>
 }
+
+let alarmas = Resources.*[ Type == 'AWS::CloudWatch::Alarm' ]
+
+rule alarmas_con_descripcion_y_datos_faltantes when %alarmas !empty {
+    %alarmas.Properties.AlarmDescription exists
+        <<Las alarmas deben describir qué significan y qué acción piden>>
+    %alarmas.Properties.TreatMissingData exists
+        <<Las alarmas deben definir cómo tratan los periodos sin datos>>
+}
+
+let tableros = Resources.*[ Type == 'AWS::CloudWatch::Dashboard' ]
+
+rule servicio_con_tablero_y_alarma_de_duracion {
+    %tableros !empty
+        <<El servicio debe tener un tablero con sus indicadores (SLI)>>
+    Resources.AlarmaDuracionProcesamiento.Properties.MetricName == 'Duration'
+        <<El objetivo de tiempo de procesamiento (SLO) debe tener una alarma>>
+}
