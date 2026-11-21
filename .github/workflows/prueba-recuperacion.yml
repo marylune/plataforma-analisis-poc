@@ -1,0 +1,48 @@
+# Prueba de recuperación de datos: daña y borra un archivo de prueba, lo recupera con el
+# control de versiones del bucket y valida que el servicio vuelve al resultado correcto.
+# Mide el tiempo de recuperación y lo compara con el objetivo (RTO). Tarda 1 o 2 minutos.
+name: Prueba de recuperación de datos
+
+on:
+  workflow_dispatch:
+    inputs:
+      ambiente:
+        description: Ambiente donde se hace la prueba
+        type: choice
+        options: [dev, qa]
+        default: qa
+
+permissions:
+  contents: read
+  id-token: write
+
+env:
+  AWS_REGION: ${{ vars.AWS_REGION || 'us-east-2' }}
+
+jobs:
+  prueba:
+    name: Prueba de recuperación de datos
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+      - run: pip install boto3==1.43.125
+      - uses: aws-actions/configure-aws-credentials@v6
+        with:
+          # Con OIDC se usa AWS_ROLE_ARN; si la cuenta no permite OIDC, las claves del usuario de IAM.
+          role-to-assume: ${{ vars.AWS_ROLE_ARN }}
+          aws-access-key-id: ${{ secrets.AWS_ACCESS_KEY_ID }}
+          aws-secret-access-key: ${{ secrets.AWS_SECRET_ACCESS_KEY }}
+          aws-region: ${{ env.AWS_REGION }}
+      - name: Dañar, borrar y recuperar un archivo de prueba
+        run: |
+          python scripts/recuperar.py --stack "plataforma-${{ inputs.ambiente }}" \
+            --rto-max-seg 900 --salida informe-recuperacion
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: informe-recuperacion
+          path: informe-recuperacion.*
+          retention-days: 90

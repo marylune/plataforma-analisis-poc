@@ -7,7 +7,7 @@ Transform:
   - AWS::LanguageExtensions
   - AWS::Serverless-2016-10-31
 Description: >-
-  Demostración técnica del Proyecto 3 (Gestión de Infraestructura): componente de
+  Demostración técnica del proyecto de Gestión de Infraestructura: componente de
   procesamiento de archivos de la plataforma (S3 -> EventBridge -> SQS -> Lambda -> DynamoDB).
 
 Parameters:
@@ -40,6 +40,14 @@ Parameters:
     Type: String
     Default: "0.0.0"
     Description: Versión semántica del repositorio (archivo VERSION).
+  AlertaDuracionMs:
+    Type: Number
+    Default: 45000
+    MinValue: 1000
+    MaxValue: 60000
+    Description: >-
+      Umbral de alerta del tiempo de procesamiento (percentil 95, en milisegundos). Debe ser
+      menor que el objetivo de 60 segundos para avisar antes de incumplirlo.
 
 Conditions:
   EsProduccion: !Equals [!Ref Ambiente, prod]
@@ -164,6 +172,11 @@ Resources:
           TABLA_TRABAJOS: !Ref TablaTrabajos
           PASADAS_PROCESAMIENTO: !Ref PasadasProcesamiento
           AMBIENTE: !Ref Ambiente
+          # La versión forma parte de la configuración para que cada versión del
+          # repositorio publique una versión nueva de la función, aunque el cambio no
+          # modifique la función (lección del Proyecto 3: sin esto, Lambda rechaza publicar
+          # una versión idéntica a la anterior y el despliegue falla).
+          VERSION_APP: !Ref VersionApp
       Policies:
         - DynamoDBCrudPolicy:
             TableName: !Ref TablaTrabajos
@@ -215,6 +228,133 @@ Resources:
       ComparisonOperator: GreaterThanThreshold
       TreatMissingData: notBreaching
 
+  # SLO de tiempo de procesamiento: el 95 % de los archivos se procesa en menos de 60 s.
+  # La alarma avisa antes de incumplirlo (umbral AlertaDuracionMs).
+  AlarmaDuracionProcesamiento:
+    Type: AWS::CloudWatch::Alarm
+    Properties:
+      AlarmName: !Sub plataforma-${Ambiente}-duracion-procesamiento
+      AlarmDescription: >-
+        El percentil 95 del tiempo de procesamiento se acerca al objetivo de 60 segundos.
+        Acción: revisar el tablero del servicio (memoria, tamaño de los archivos y cola).
+      Namespace: AWS/Lambda
+      MetricName: Duration
+      Dimensions:
+        - Name: FunctionName
+          Value: !Sub plataforma-${Ambiente}-procesamiento
+      ExtendedStatistic: p95
+      Period: 300
+      EvaluationPeriods: 1
+      Threshold: !Ref AlertaDuracionMs
+      ComparisonOperator: GreaterThanThreshold
+      TreatMissingData: notBreaching
+
+  # Tablero del servicio: reúne los indicadores (SLI) con las cuatro señales doradas
+  # (latencia, tráfico, errores y saturación), el estado de las alarmas y los registros.
+  TableroServicio:
+    Type: AWS::CloudWatch::Dashboard
+    Properties:
+      DashboardName: !Sub plataforma-${Ambiente}-servicio
+      DashboardBody: !Sub |
+        {
+          "widgets": [
+            {
+              "type": "text", "x": 0, "y": 0, "width": 24, "height": 5,
+              "properties": {
+                "markdown": "# Plataforma de análisis · procesamiento de archivos (${Ambiente})\nVersión **${VersionApp}** · memoria de la función **${MemoriaProcesamiento} MB**\n\nIndicador (SLI) | Objetivo (SLO) | Alerta\n----|-----|-----\nTiempo de procesamiento, percentil 95 | menos de 60 s | más de ${AlertaDuracionMs} ms durante 5 min\nArchivos procesados sin error | 99 % o más | cualquier error en 1 min\nArchivos en la cola de errores | 0 pendientes | 1 o más mensajes\n"
+              }
+            },
+            {
+              "type": "alarm", "x": 0, "y": 5, "width": 24, "height": 3,
+              "properties": {
+                "title": "Estado de las alarmas",
+                "alarms": [
+                  "${AlarmaDuracionProcesamiento.Arn}",
+                  "${AlarmaErroresProcesamiento.Arn}",
+                  "${AlarmaColaErrores.Arn}"
+                ]
+              }
+            },
+            {
+              "type": "metric", "x": 0, "y": 8, "width": 12, "height": 6,
+              "properties": {
+                "title": "Latencia: tiempo de procesamiento por archivo (ms)",
+                "region": "${AWS::Region}", "view": "timeSeries", "stacked": false, "period": 300,
+                "metrics": [
+                  ["AWS/Lambda", "Duration", "FunctionName", "plataforma-${Ambiente}-procesamiento", {"stat": "p95", "label": "Percentil 95"}],
+                  [".", ".", ".", ".", {"stat": "Average", "label": "Promedio"}]
+                ],
+                "annotations": {
+                  "horizontal": [
+                    {"label": "SLO: 60 s", "value": 60000},
+                    {"label": "Alerta", "value": ${AlertaDuracionMs}}
+                  ]
+                },
+                "yAxis": {"left": {"min": 0}}
+              }
+            },
+            {
+              "type": "metric", "x": 12, "y": 8, "width": 12, "height": 6,
+              "properties": {
+                "title": "Errores: archivos procesados sin error (%)",
+                "region": "${AWS::Region}", "view": "timeSeries", "stacked": false, "period": 300,
+                "metrics": [
+                  [{"expression": "100 * (1 - errores / invocaciones)", "label": "Procesamiento exitoso (%)", "id": "exito"}],
+                  ["AWS/Lambda", "Errors", "FunctionName", "plataforma-${Ambiente}-procesamiento", {"id": "errores", "stat": "Sum", "visible": false}],
+                  [".", "Invocations", ".", ".", {"id": "invocaciones", "stat": "Sum", "visible": false}]
+                ],
+                "annotations": {"horizontal": [{"label": "SLO: 99 %", "value": 99}]},
+                "yAxis": {"left": {"min": 0, "max": 100}}
+              }
+            },
+            {
+              "type": "metric", "x": 0, "y": 14, "width": 8, "height": 6,
+              "properties": {
+                "title": "Tráfico: archivos recibidos y procesados",
+                "region": "${AWS::Region}", "view": "timeSeries", "stacked": false, "period": 300,
+                "metrics": [
+                  ["AWS/SQS", "NumberOfMessagesSent", "QueueName", "${ColaProcesamiento.QueueName}", {"stat": "Sum", "label": "Archivos recibidos en la cola"}],
+                  ["AWS/Lambda", "Invocations", "FunctionName", "plataforma-${Ambiente}-procesamiento", {"stat": "Sum", "label": "Ejecuciones de la función"}]
+                ],
+                "yAxis": {"left": {"min": 0}}
+              }
+            },
+            {
+              "type": "metric", "x": 8, "y": 14, "width": 8, "height": 6,
+              "properties": {
+                "title": "Errores: fallas de la función y cola de errores",
+                "region": "${AWS::Region}", "view": "timeSeries", "stacked": false, "period": 300,
+                "metrics": [
+                  ["AWS/Lambda", "Errors", "FunctionName", "plataforma-${Ambiente}-procesamiento", {"stat": "Sum", "label": "Ejecuciones con error"}],
+                  ["AWS/SQS", "ApproximateNumberOfMessagesVisible", "QueueName", "${ColaErrores.QueueName}", {"stat": "Maximum", "label": "Mensajes en la cola de errores"}]
+                ],
+                "yAxis": {"left": {"min": 0}}
+              }
+            },
+            {
+              "type": "metric", "x": 16, "y": 14, "width": 8, "height": 6,
+              "properties": {
+                "title": "Saturación: concurrencia y espera en la cola",
+                "region": "${AWS::Region}", "view": "timeSeries", "stacked": false, "period": 300,
+                "metrics": [
+                  ["AWS/Lambda", "ConcurrentExecutions", "FunctionName", "plataforma-${Ambiente}-procesamiento", {"stat": "Maximum", "label": "Ejecuciones simultáneas"}],
+                  [".", "Throttles", ".", ".", {"stat": "Sum", "label": "Ejecuciones limitadas"}],
+                  ["AWS/SQS", "ApproximateAgeOfOldestMessage", "QueueName", "${ColaProcesamiento.QueueName}", {"stat": "Maximum", "label": "Espera del mensaje más antiguo (s)", "yAxis": "right"}]
+                ],
+                "yAxis": {"left": {"min": 0}, "right": {"min": 0}}
+              }
+            },
+            {
+              "type": "log", "x": 0, "y": 20, "width": 24, "height": 6,
+              "properties": {
+                "title": "Registros: últimos archivos procesados",
+                "region": "${AWS::Region}", "view": "table",
+                "query": "SOURCE '${RegistrosProcesamiento}' | fields @timestamp, archivo, duracionProcesamientoMs, memoriaMb, versionFuncion\n| filter mensaje = 'archivo procesado'\n| sort @timestamp desc\n| limit 20"
+              }
+            }
+          ]
+        }
+
 Outputs:
   NombreBucket:
     Description: Bucket donde se cargan los archivos.
@@ -233,3 +373,8 @@ Outputs:
     Value: !Ref FuncionProcesamientoAliaslive
   MemoriaConfigurada:
     Value: !Ref MemoriaProcesamiento
+  NombreTablero:
+    Description: Tablero de CloudWatch con los indicadores del servicio.
+    Value: !Ref TableroServicio
+  UrlTablero:
+    Value: !Sub https://${AWS::Region}.console.aws.amazon.com/cloudwatch/home?region=${AWS::Region}#dashboards/dashboard/${TableroServicio}
